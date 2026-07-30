@@ -1,0 +1,34 @@
+---
+title: "Get data"
+---
+
+The fastest way to use BEAR is to download the combined `BEAR.rds`
+dataset from [GitHub Releases](https://github.com/wwiecek/BEAR/releases).
+
+From a shell, the current release can be downloaded with:
+
+```bash
+curl -L -o BEAR.rds \
+  https://github.com/wwiecek/BEAR/releases/download/v2/BEAR.rds
+```
+
+## Access individual datasets
+
+The `BEAR.rds` dataset intentionally keeps those individual datasets opt-in so that the 
+main dataset remains small and easy to work with.
+In some cases the full dataset (e.g. millions of data points from PubMed scrape 
+studies) is only available in the file in `data/`.
+
+If you only want to download some of the datasets, you can find them at 
+https://github.com/wwiecek/BEAR_data
+
+If you want all the individual datasets, clone the BEAR repository and then 
+initialise its `data/` submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+
+
+

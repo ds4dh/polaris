@@ -1,0 +1,116 @@
+library(kableExtra)
+library(tidyverse)
+library(ggplot2)
+
+source("R/settings.R")
+source("R/helpers.R")
+source("R/mix.R")
+source("R/psr.R")
+source("R/paper_selection.R")
+
+# Calculate performance of datasets.
+mfl <- load_all_mixtures()
+
+psr_draw_n <- 2e5
+
+dataset_seed <- function(dataset, z_star) {
+  chars <- utf8ToInt(paste0(dataset, "|", z_star))
+  sum(chars * seq_along(chars)) %% .Machine$integer.max
+}
+
+with_seed <- function(seed, expr) {
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if(had_seed)
+    old_seed <- get(".Random.seed", envir = .GlobalEnv)
+  on.exit({
+    if(had_seed)
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    else if(exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
+      rm(".Random.seed", envir = .GlobalEnv)
+  }, add = TRUE)
+  set.seed(seed)
+  force(expr)
+}
+
+df_psr <- imap_dfr(
+  mfl,
+  ~ with_seed(dataset_seed(.y, 0),
+              powsignrep(.x, N = psr_draw_n)),
+  .id = "dataset"
+)
+# now only keeping significant results 
+# (power columns won't make sense/won't change!----but I do not use them)
+df_psr196 <- imap_dfr(
+  mfl,
+  ~ with_seed(dataset_seed(.y, 1.959),
+              powsignrep(.x, z_star = 1.959, N = psr_draw_n)),
+  .id = "dataset"
+)
+
+# Erik: I’d like to put the following in Table 2
+# 
+# - name of the dataset
+# - omega (risk ratio of publication)
+# - raw proportion of significant
+# - assurance
+# - predictive power when |z|=1.96
+# - P(|SNR|>2.8) = P(PoS>0.8) (PoS stands for the probability of significance)
+# - probability of the correct sign
+# - probability of the correct sign when |z|=1.96
+
+bear <- readRDS("BEAR.rds")
+bear_summary_psr <- bear %>% 
+  mutate(dataset = ifelse(dataset == "clinicaltrials" | dataset == "euctr", "ctgov_euctr", dataset)) %>% 
+  group_by(dataset) %>% 
+  mutate(z_operator = ifelse(is.na(z_operator), "=", z_operator)) %>% 
+  # if we used 1.96 here, we'd lose a big chunk of scraping studies that reported p of 0.05
+  summarise(prop_signif = sum((abs(z) > 1.959) & (z_operator != "<"))/n())
+
+bear_env <- new.env(parent = emptyenv())
+load("paper/bear_lists.Rdata", envir = bear_env)
+
+original_summary_psr <- imap_dfr(
+  bear_env$bear_list_thin[c("SCORE original", "Many Labs original",
+                            "OSC original")],
+  ~ .x %>%
+    summarise(
+      dataset = .y,
+      prop_signif = sum((abs(z) > 1.959) & (z_operator != "<")) / n()
+    )
+)
+
+bear_summary_psr <- bind_rows(bear_summary_psr, original_summary_psr)
+
+# Table with study summaries ------
+summarise_psr <- function(df) 
+  df %>% 
+  group_by(dataset) %>% 
+  summarise(
+    assurance = mean(power),
+    pos_80pct = sum(power > .8)/n(),
+    pos_80pct_signif = mean(abs(snr[abs(z) > 1.96]) > 2.8),
+    sign = mean(sgn),
+    replication = mean(rep)) 
+
+tab2 <- summarise_psr(df_psr) %>% 
+  left_join(summarise_psr(df_psr196) %>%   
+              # There are PoS columns in there too, but they would be nonsense
+              transmute(dataset, 
+                        sign_signif = sign, 
+                        repl_signif = replication)
+            , by = "dataset") %>% 
+  left_join(bear_summary_psr, by = "dataset") %>% 
+  rowwise() %>%
+  mutate(omega = mfl[[dataset]]$omega[1],
+         pos_80pct_196 = pos_thresh_vec_fit(1.96, mfl[[dataset]], pos_thresh = .8),
+         sign_196 = gap_vec_fit(1.96, mfl[[dataset]])$sgn,
+         repl_196 = gap_vec_fit(1.96, mfl[[dataset]])$rep) %>%
+  ungroup() %>% 
+  select(dataset, prop_signif, omega, assurance, 
+         pos_80pct, pos_80pct_signif, pos_80pct_196,
+         replication, repl_196, repl_signif,
+         sign, sign_196, sign_signif) %>% 
+  mutate_if(is.numeric, function(x) round(x, 3)) #to make csv readable
+
+rm(bear)
+write_csv(tab2, file = "paper/power_sign_rep.csv")

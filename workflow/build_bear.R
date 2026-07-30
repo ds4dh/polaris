@@ -1,0 +1,640 @@
+# Prepare data -----
+library(haven)
+library(tidyverse)
+library(metafor) #for CDSR calculations of effect sizes (binary data)
+library(dplyr)
+library(stringi) #for cleaning up some study names
+filter <- dplyr::filter
+
+dtlist <- list()
+source("R/helpers.R")
+
+
+
+# Brodeur et al ------
+
+dtlist[["Brodeur"]] <- readRDS("data/Brodeur.rds") %>%
+  filter(method == "RCT") %>%
+  transmute(
+    metaid = NA,
+    studyid = title,
+    method = method,
+    measure = NA,
+    subset = case_when(
+      as.numeric(prereg) == 1 & as.numeric(preanalysisplan) == 1 ~
+        "preregistered with PAP",
+      as.numeric(prereg) == 1 ~ "preregistered without PAP",
+      TRUE ~ "not preregistered"
+    ),
+    z = ifelse(!is.na(coeff) & coeff != 0, sign(coeff) * zstat, zstat),
+    b = coeff,
+    se = stderror,
+    year = year)
+
+# Could use:
+# mutate(
+# prereg = factor(prereg, labels=c("not pre-registered","pre-registered")),
+# papregistry = factor(papregistry,labels=c("no analysis plan","analysis plan"))) %>%
+
+
+
+# Lang ------
+
+dtlist[["Lang"]] <- readRDS("data/Lang.rds") %>%
+  transmute(
+    metaid = NA,
+    studyid = studyid,
+    method = method,
+    measure = NA,
+    z = z,
+    b = b,
+    se = se,
+    year = year,
+    subset = lang_source
+  )
+
+
+
+# Askarov -----
+
+# data from https://github.com/anthonydouc/Datasharing/blob/master/Stata/Mandatory%20data-sharing%2030%20Aug%202022.dta
+
+dtlist[["Askarov"]] <- readRDS("data/Askarov.rds") %>%
+  mutate(z = effectsize/standarderror) %>%
+  dplyr:: filter(Excludegroup==0) %>%
+  transmute(
+    metaid = filename,
+    studyid = studyid,
+    method = ifelse(EXPERIMENT == 1, "RCT", ifelse(mixed == 1, "mixed", "observational")),
+    measure = NA,
+    subset = if_else(MACRO == 1, "macro", "micro/other"),
+    z = effectsize/standarderror,
+    b = effectsize,
+    se = standarderror,
+    year = ifelse(YEARintervention != 0, YEARintervention, NA))
+
+# could be useful:
+# mutate(data_sharing = (EVENT==0 | INTERVENTION==1)) %>%
+
+
+
+# Arel-Bundock -----
+
+dtlist[["ArelBundock"]] <-
+  # read_csv("data/ArelBundock/estimates.csv",
+  #          show_col_types = FALSE) %>%
+  readRDS("data/ArelBundock.rds") %>%
+  # There may be problems printing and encoding some characters down the line
+  # e.g. "unable to translate 'Garc<cd>a Bedolla and Michelson' to a wide string"
+  # so best to normalise them
+  mutate(study_id = stri_trans_nfc(study_id)) %>%
+  transmute(
+    # question_id is the 351 within-article meta-analysis unit; meta_id is the
+    # 46 source-article identifier. The Briggs/Doucouliagos source flag remains
+    # in data/ArelBundock.rds.
+    metaid = question_id,
+    studyid = study_id,
+    field = subfield,
+    method = NA,
+    measure = NA,
+    subset = meta_id,
+    z = as.numeric(estimate)/as.numeric(std.error),
+    b = as.numeric(estimate),
+    se = as.numeric(std.error),
+    ss = n,
+    year = study_year)
+
+
+
+# What Works Clearinghouse -----
+
+# using data from WWC website directly
+dtlist[["WWC"]] <- readRDS("data/WWC.rds") %>%
+  filter(
+    method %in% c("RCT", "quasi"),
+    Study_Rating %in% c(
+      "Meets WWC standards without reservations",
+      "Meets WWC standards with reservations"
+    ),
+    !Is_Subgroup
+  ) %>%
+  transmute(
+    metaid = NA,
+    studyid = study_id,
+    method = method,
+    measure = NA,
+    subset = Outcome_Domain,
+    z = sign(b) * z_from_p(pval),
+    z_operator = ifelse(pval == 1e-16, ">", "="),
+    b = b,
+    se = NA_real_,
+    ss = ss,
+    year = year
+  ) %>%
+  filter(!is.na(z)) %>%
+  group_by(subset) %>%
+  mutate(subset_n = n()) %>%
+  ungroup() %>%
+  mutate(subset = if_else(subset_n < 50, "Other", subset)) %>%
+  select(-subset_n)
+
+
+
+# Yang et al -----
+
+dtlist[["Yang"]] <- readRDS("data/Yang.rds") %>%
+  mutate(year_pub = ifelse(year_pub < 1900, NA, year_pub)) %>% # 1 typo
+  # The saved metadata has measure and meta_id file IDs, but no reviewed
+  # source map for classifying ecology/evolution per row yet.
+  transmute(
+    metaid = meta_id,
+    studyid = study_ID,
+    year = year_pub,
+    measure = measure,
+    method = NA,
+    z = es/sei,
+    b = es,
+    se = sei,
+    ss = NA)
+
+
+
+# Costello and Fox -----
+
+label_costello_source <- function(source) {
+  source <- str_to_lower(source)
+  case_when(
+    str_detect(source, "evol|evolution|heredity|j\\.evol|jeb") ~ "evolution",
+    str_detect(source, paste(c(
+      "ecol", "oikos", "oecologia", "gcb", "global\\.ecol", "geb",
+      "jae", "jecol", "j\\.anim\\.ecol", "j\\.appl\\.ecol", "functecol",
+      "func\\.ecol", "ecosphere", "new\\.phyto", "conserv\\.biol"
+    ), collapse = "|")) ~ "ecology",
+    TRUE ~ "other ecology/evolution"
+  )
+}
+
+dtlist[["CostelloFox"]] <-
+  readRDS("data/CostelloFox.rds") %>%
+  transmute(
+    metaid = as.character(meta.analysis.id), #meta.analysis.paper has only 232 unique values, this has 466
+    studyid = study2,
+    measure = grouped_es, #could use eff.size.measure for more info
+    subset = label_costello_source(meta.analysis.paper),
+    method = NA,
+    z = z,
+    b = eff.size,
+    se = se.eff.size,
+    ss = NA,
+    year = study.year)
+
+
+
+# Jager and Leek -----
+
+dtlist[["JagerLeek"]] <-
+  readRDS("data/JagerLeek.rds") %>%
+  mutate(method = ifelse(grepl("randomized|randomised|controlled", title), "RCT", NA)) %>%
+  transmute(
+    metaid = NA,
+    studyid = pubmedID,
+    method = method,
+    measure = NA,
+    p = pvalue,
+    z = z_from_p(pvalue),
+    b = NA, se = NA, ss=NA,
+    # about 1/3 truncated, almost always .0001, .001, .01, or .05, so it's "p <"
+    z_operator = case_when(
+      pvalue == 0 ~ ">",
+      pvalueTruncated == "1" ~ ">",
+      TRUE ~ "="),
+    year = year)
+
+
+
+# Sladekova -----
+
+dtlist[["Sladekova"]] <-
+  readRDS("data/Sladekova.rds") %>%
+  filter(!is.na(b)) %>%
+  mutate(method = NA,
+         measure = "Zr",
+         z = b/se,
+         year = NA) %>%
+  filter(!is.na(metaid))
+
+# Metapsy -----
+
+# sort(table(unlist(lapply(readRDS("data/Metapsy.rds"), function(f) names(f)))), decreasing = TRUE)
+
+dtlist[["Metapsy"]] <- readRDS("data/Metapsy.rds") %>%
+  transmute(
+    metaid = metaid,
+    studyid = study,
+    method = "RCT", #Metapsy only includes RCTs
+    measure = "SMD",
+    year = year,
+    z = .g/.g_se, #I lazily used .g for effect sizes, in one case they're SMD
+    b = .g,
+    se = .g_se,
+    ss = ss)
+
+
+
+# Barnett and Wren -----
+
+dtlist[["BarnettWren"]] <- readRDS("data/BarnettWren.rds") %>%
+  filter(!mistake) %>%
+  # 0.3% of available values have CI widths other than 95%, let's remove these
+  # but if ci.level is unknown, assume that it's actually 95%
+  mutate(ci.level = ifelse(is.na(ci.level), 0.95, ci.level)) %>%
+  filter(ci.level == 0.95) %>%
+  # Remove cases where CI is zero
+  filter(lower < upper) %>%
+  # To allow for log(lower), add a tiny value to zeroes (~0.1% of the sample)
+  mutate(lower = ifelse(lower > 0, lower, 1e-05)) %>%
+  mutate(se = (log(upper) - log(lower))/(2*1.96)) %>%
+  mutate(b = (log(upper) + log(lower))/2) %>%
+  mutate(z = b/se) %>%
+  transmute(metaid = NA,
+            studyid = pubmed,
+            method = NA,
+            measure = "ratio",
+            z = b/se,
+            b = b,
+            se = se,
+            year = Year,
+            ss = NA) %>%
+  filter(!is.na(z)) %>%
+  # For scraped datasets, I only keep 50,000 rows in BEAR
+  thin_df(50000, seed = 20250117)
+
+
+
+# Cochrane (2025 cut) -----
+
+dtlist[["Cochrane"]] <- readRDS("data/Cochrane.rds") %>%
+  # This dataset has >700,00 rows but for main BEAR I care about
+  # main comparisons and main outcomes
+  dplyr::filter(
+    !is.na(measure_group), #in last version this is zero
+    # Even though we make our own calculation, it's better to
+    # Remove small minority of studies that would require more complicated calculations
+    # small minority of data is IPD or IV ("results with effects and standard errors
+    # but without the data necessary for their computation") and we exclude these
+    outcome.flag %in% c("CONT","DICH"),
+    # First comparison and first outcome is most likely to be the primary outcome of interest in a given review
+    # THIS REMOVES 95% OF DATA! YOu may want to construct it differently for future analyses
+    comparison.nr == 1, outcome.nr == 1,
+    outcome_group == "efficacy",
+    outcome.flag != "DICH" |
+      !((events1 == 0 & events2 == 0) |
+          (events1 == total1 & events2 == total2))) %>%
+  # I do a little bit extra recoding for BEAR, but no essential changes
+  transmute(
+    metaid = id,
+    studyid = study.name,
+    year = study.year,
+    # Still working on this one:
+    method = ifelse(rct, "RCT", "unknown"),
+    measure = measure,
+    outcome_group = as.character(outcome_group),
+    z = z,
+    b = yi,
+    se = sqrt(vi),
+    subset = as.character(specialty),
+    ss = total1 + total2,
+    group = case_when(
+      study.data_source == "PUB" ~ "published",
+      study.data_source == "UNPUB" ~ "unpublished",
+      study.data_source == "SOUGHT" ~ "sought",
+      study.data_source == "MIX" ~ "mixed"
+    )) %>%
+  # There are some very small subcategories, I set them to NA instead
+  group_by(subset) %>%
+  mutate(n = n()) %>%
+  ungroup() %>%
+  mutate(subset = if_else(n < 50, NA_character_, subset)) %>%
+  filter(!is.na(b))
+
+
+
+# Cochrane 2019 -----
+
+# load("data/Cochrane2019/CDSR.RData")  # reads in dataframe "data"
+# data_filtered <- data %>%
+#   select(-char.interventions) %>%
+#   filter(
+#     # non-RCT data comprise more than half of all data
+#     # RCT=="yes",
+#     # small minority of data is IPD or IV ("results with effects and standard errors
+#     # but without the data necessary for their computation") and we exclude these
+#     outcome.flag %in% c("CONT","DICH"),
+#     outcome.group=="efficacy",
+#     # This will pare it down from 410,000 rows to 31,000:
+#     outcome.nr==1,
+#     comparison.nr==1)
+#
+# dtlist[["Cochrane2019"]] <- rbind(
+#   dplyr::filter(data_filtered, outcome.flag=="CONT") %>%
+#     escalc(m1i=mean1,sd1i=sd1,n1i=total1,
+#            m2i=mean2,sd2i=sd2,n2i=total2,measure="SMD",
+#            data=., append=TRUE) %>%
+#     as_tibble() %>% mutate(measure = "SMD"),
+#   dplyr::filter(data_filtered, outcome.flag=="DICH") %>%
+#     escalc(ai=events1,n1i=total1,
+#            ci=events2,n2i=total2,measure="PBIT",
+#            data=.,append=TRUE) %>%
+#     as_tibble() %>% mutate(measure = "probit")
+# ) %>%
+#   transmute(
+#     metaid = id,
+#     studyid = study.name,
+#     method = ifelse(RCT == "yes", "RCT", "observational"),
+#     measure = measure,
+#     z = yi/sqrt(vi),
+#     b = yi,
+#     se = sqrt(vi),
+#     year = study.year,
+#     group = as.character(specialty),
+#     ss = total1 + total2)
+#
+# rm(data, data_filtered)
+
+
+
+# EUCTR -----
+
+dtlist[["euctr"]] <- readRDS("data/euctr.rds") %>%
+  filter(collection == "EUCTR") %>%
+  transmute(
+    metaid  = NA,
+    studyid = id,
+    year,
+    subset = tolower(phase),
+    measure = measure_class,
+    method  = NA_character_,
+    z, z_operator,
+    b, se,
+    ss      = n
+  )
+
+
+
+# clinicaltrials.gov -----
+
+# dtlist[["Adda"]] <- read_dta("data/Adda/data_counterfactual_analysis.dta") %>%
+#   # 15 cases of trials that will finish in the future, so set to NA just in case
+#   mutate(ifelse(completion_year >= 2025, NA, completion_year)) %>%
+#   filter(phase %in% c("Phase 2","Phase 3")) %>%
+#   transmute(metaid = NA,
+#             studyid = nct_id,
+#             method = "RCT",
+#             measure = NA,
+#             year = completion_year,
+#             z = z,
+#             b = NA,
+#             se = NA,
+#             ss = enrollment, #remember to note this in dataset notes!
+#             z_operator = case_when(p_value_modifier == "<" ~ ">",
+#                                    p_value_modifier == ">" ~ "<",
+#                                    .default = "=")
+#   )
+
+dtlist[["clinicaltrials"]] <- readRDS("data/clinicaltrialsgov.rds") %>%
+  filter(include_in_bear) %>%
+  filter(study_type == "INTERVENTIONAL" & allocation == "RANDOMIZED") %>%
+  filter(n_effect_rows_per_study < 20) %>%
+  transmute(studyid = nct_id,
+            year = year,
+            subset = tolower(phase),
+            method = "RCT",
+            measure = if_else(
+              measure_class == "Standardized Mean Difference", "SMD", measure_class
+            ),
+            z = z,
+            z_operator = z_operator,
+            b = b,
+            se = se,
+            ss = enrollment)
+
+
+
+# Head -----
+
+dtlist[["Head"]] <- readRDS("data/Head.rds") %>%
+  transmute(metaid = NA,
+            studyid = pmid,
+            subset = case_when(
+              section == "abstract" ~ "abstract",
+              section == "results" ~ "full text/results",
+              TRUE ~ NA_character_
+            ),
+            method = NA,
+            measure = NA,
+            year = year,
+            p = p.value,
+            z = z_from_p(p.value),
+            b = NA,
+            se = NA,
+            ss = NA,
+            # we do not differntiate between leq and lesser, because it doesn't
+            # really change analytical procedures we have in mind
+            z_operator = case_when(
+              p.value == 0 ~ ">",
+              operator == "=" ~ "=",
+              operator == "<" ~ ">",
+              operator == ">" ~ "<",
+              operator == "≤" ~ ">",
+              operator == "≥" ~ "<"
+            )) %>%
+  filter(!is.na(z)) %>%
+  # For scraped datasets, I only keep 50,000 rows in BEAR
+  thin_df(50000, seed = 20250117)
+
+
+
+# Chavalarias -----
+
+dtlist[["Chavalarias"]] <- readRDS("data/Chavalarias.rds") %>%
+  # p_format coding is explained on Harvard Dataverse, but 99.3% of the values are "plain",
+  # so we stick to that
+  filter(p_format == "plain") %>%
+  mutate(operator = case_when(
+    operator %in% c("<", "<<", "<<<", "<=", "less than", "=<") ~ "<",
+    operator == "=" ~ "=",
+    operator == ">" ~ ">",
+    TRUE ~ NA)) %>%
+  # removes <0.08% of data with some edge cases we are not interested in
+  filter(!is.na(operator)) %>%
+  transmute(metaid = NA,
+            studyid = studyid,
+            subset = case_when(
+              source == "MEDLINE" ~ "MEDLINE abstract",
+              source == "PMC full text" ~ "PMC full text",
+              TRUE ~ NA_character_
+            ),
+            method = NA,
+            measure = NA,
+            year = year,
+            p = p,
+            z = z_from_p(p),
+            b = NA,
+            se = NA,
+            ss = NA,
+            z_operator = case_when(
+              p == 0 ~ ">",
+              operator == "=" ~ "=",
+              operator == "<" ~ ">",
+              operator == ">" ~ "<"
+            )) %>%
+  filter(!is.na(z)) %>%
+  # For scraped datasets, I only keep 50,000 rows in BEAR
+  thin_df(50000, seed = 20250117)
+
+
+
+# Open Science Collab replication project -----
+
+dtlist[["OSC"]] <- readRDS("data/OSC.rds") %>%
+  mutate(
+    p = T_pval_USE..R.,
+    orig.p = T_pval_USE..O.,
+    z = sign(T_r..R.) * z_from_p(p),
+    orig.z = sign(T_r..O.) * z_from_p(orig.p)
+  ) %>%
+  transmute(
+    metaid = NA,
+    studyid = Study.Num,
+    method = "RCT",
+    measure = NA,
+    z,
+    z_operator = ifelse(p > 0, "=", ">"),
+    p,
+    b = T_r..R.,
+    se = ifelse(!is.na(b) & !is.na(z) & z != 0, abs(b / z), NA_real_),
+    year = NA,
+    ss = as.numeric(N..R.),
+    orig.z,
+    orig.z_operator = ifelse(orig.p > 0, "=", ">"),
+    orig.p,
+    orig.b = T_r..O.,
+    orig.se = ifelse(
+      !is.na(orig.b) & !is.na(orig.z) & orig.z != 0,
+      abs(orig.b / orig.z),
+      NA_real_
+    ),
+    orig.ss = readr::parse_number(as.character(N..O.), na = c("", "NA", "X"))
+  ) %>% as_tibble()
+
+
+
+# Bartos -----
+
+# Very nicely organised dataset on exercise which requires no extra work from us
+dtlist[["Bartos"]] <- readRDS("data/Bartos.rds") %>%
+  transmute(
+    metaid = as.character(meta_id),
+    studyid = as.character(id), #these are unique (=same number of IDs as rows in the dataset)
+    method = "RCT",
+    measure = "SMD",
+    z = effect_size/standard_error,
+    z_operator = "=",
+    b = effect_size,
+    se = standard_error,
+    year = year,
+    subset = category, # why not!
+    # There is also total m-a size: samples_size; ignoring
+    ss = sample_size
+  )
+
+
+
+# Szucs -----
+
+dtlist[["Szucs"]] <- readRDS("data/Szucs.rds") %>%
+  filter(subset == "Cognitive neuroscience") %>%
+  transmute(
+    metaid, studyid, method = NA_character_, measure, subset, field,
+    z, z_operator, p, b, se, ss,
+    source
+  )
+
+
+
+# SCORE -----
+
+score_replications <- readRDS("data/SCORE_replications.rds")
+
+dtlist[["SCORE_replications"]] <- score_replications %>%
+  filter(source == "replication") %>%
+  left_join(
+    score_replications %>%
+      filter(source == "original") %>%
+      transmute(
+        claim_id,
+        orig.z = z,
+        orig.z_operator = z_operator,
+        orig.p = p,
+        orig.b = b,
+        orig.se = se,
+        orig.ss = ss
+      ),
+    by = "claim_id"
+  ) %>%
+  transmute(
+    metaid, studyid, method = NA_character_, measure,
+    z, z_operator, p, b, se, ss, year, source, subset,
+    orig.z, orig.z_operator, orig.p, orig.b, orig.se, orig.ss
+  )
+
+dtlist[["SCORE_claims"]] <- readRDS("data/SCORE_all_claims.rds") %>%
+  transmute(
+    metaid, studyid, method = NA_character_, measure,
+    z, z_operator, p, b, se, ss, year, source, subset
+  )
+
+
+
+# psymetadata -----
+
+psymetadata <- readRDS("data/psymetadata.rds")
+
+# keep Many Labs 2 and the intelligence meta-meta-analysis out of psymetadata
+dtlist[["psymetadata"]]   <- dplyr::filter(psymetadata, !(subset %in% c("manylabs2018", "nuijten2020")))
+dtlist[["ManyLabs2"]]     <- readRDS("data/ManyLabs2.rds")
+dtlist[["Nuijten"]]       <- dplyr::filter(psymetadata, subset == "nuijten2020") %>%
+  mutate(subset = NA_character_)
+
+
+
+
+# Bogdan -----
+
+# x <- read_csv("data/Bogdan/df_combined_pruned_Jan21.csv")
+# x <- read_csv("data/Bogdan/df_combined_w_no_sig_all_aff_Jan21.csv")
+# x <- read_csv("data/Bogdan/Youyou_etal_replications.csv")
+# View(x)
+#
+# dtlist[["Bogdan"]] <- x
+
+
+
+# Processing of individual datasets and binding into a single large dataset ----
+bear <- dtlist %>%
+  lapply(function(x) {x$studyid <- as.character(x$studyid); x}) %>%
+  lapply(filter, !is.na(z)) %>%
+  bind_rows(.id = "dataset")
+
+saveRDS(bear, "BEAR.rds")
+
+source("workflow/write_site_metrics.R")
+write_site_metrics(calculate_site_metrics(bear))
+
+rm(dtlist)
+
+# Refresh README
+rmarkdown::render(
+  "README.Rmd",
+  output_format = rmarkdown::github_document(html_preview = FALSE)
+)

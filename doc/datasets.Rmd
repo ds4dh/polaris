@@ -1,0 +1,61 @@
+---
+title: "Datasets included in BEAR"
+subtitle: "Appendix"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  bookdown::pdf_document2:
+    toc: true
+    number_sections: false
+    keep_tex: false
+geometry: margin=1in
+fontsize: 11pt
+bibliography: references.bib
+---
+
+# GitHub repository for BEAR
+
+BEAR is available at https://github.com/wwiecek/BEAR. For those interested in accessing data for individual datasets (which often include additional variables and structure), 
+
+BEAR stores each processed dataset as a separate `.rds` file under `data/`;
+dataset processing is carried out under `process/`. Raw source data are not
+distributed with the repository, but their source, availability, and relevant
+processing decisions are described in the dataset notes and in the section
+_Standard procedure for dealing with p-values and confidence intervals_.
+
+
+
+```{r stitch, echo=FALSE, results="asis"}
+dataset_files <- c(
+  "datasets/ArelBundock.Rmd",
+  "datasets/Askarov.Rmd",
+  "datasets/BarnettWren.Rmd",
+  "datasets/Bartos.Rmd",
+  "datasets/Brodeur.Rmd",
+  "datasets/Lang.Rmd",
+  "datasets/Chavalarias.Rmd",
+  "datasets/clinicaltrials_gov.Rmd",
+  "datasets/Cochrane.Rmd",
+  "datasets/CostelloFox_Yang.Rmd",
+  "datasets/EUCTR.Rmd",
+  "datasets/Head.Rmd",
+  "datasets/JagerLeek.Rmd",
+  "datasets/Metapsy.Rmd",
+  "datasets/OSC.Rmd",
+  "datasets/psymetadata_Nuijten.Rmd",
+  "datasets/Sladekova.Rmd",
+  "datasets/Szucs.Rmd",
+  "datasets/ManyLabs2.Rmd",
+  "datasets/SCORE.Rmd",
+  "datasets/WWC.Rmd"
+)
+
+for (child in dataset_files) {
+  cat("\n\n\\newpage\n\n")
+  cat(knitr::knit_child(child, quiet = TRUE), sep = "\n")
+}
+
+cat("\n\n\\newpage\n\n")
+cat(knitr::knit_child("p_value_and_ci_derivations.Rmd", quiet = TRUE), sep = "\n")
+```
+
+# References for datasets used in BEAR
