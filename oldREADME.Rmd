@@ -1,7 +1,7 @@
 
-# Benchmarks of Empirical Accuracy in Research
+# Polypharmacy Optimization, Language-model Assessment, Reasoning, and Intelligence Suite
 
-BEAR is a meta-database containing z values, effect sizes and standard errors
+POLARIS is a meta-database containing z values, effect sizes and standard errors
 from existing databases in various scientific disciplines.
 It doesn't contribute any new data, but
 repackages and merges what's publicly available in a manner which we hope
@@ -10,7 +10,7 @@ issues of replication, exchangeability, meta-analysis etc. etc. The current rele
 
 This package includes our entire workflow (in R), documentation, results, and optional modelling of empirical research.
 
-- **Website:** <https://wwiecek.github.io/BEAR/>
+- **Website:** <https://ds4dh.github.io/POLARIS/>
 - **If you want to grab data only**, head to the GitHub Releases page and grab `BEAR.rds` [at this link](https://github.com/wwiecek/BEAR/releases).**
 - If you want to do more data work with individual datasets, see _Downloading BEAR data_ below.
 - To re-run everything, including modelling of data, see `main.R`.
